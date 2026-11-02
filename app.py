@@ -1,7 +1,4 @@
 from flask import Flask, request, jsonify
-import numpy as np
-import threading
-import time
 import os
 import json
 import secrets
@@ -9,39 +6,9 @@ import secrets
 app = Flask(__name__)
 
 KEYS_FILE = "tcai_keys.json"
-WEIGHTS_FILE = "tcai_weights.json"
+MEMORY_FILE = "tcai_conocimiento.json"
 
-class TCAIModel001Lite:
-    def __init__(self):
-        self.experiencias = 0
-        self.pesos = np.random.randn(4, 8)
-        self.cargar_estado()
-
-    def cargar_estado(self):
-        if os.path.exists(WEIGHTS_FILE):
-            try:
-                with open(WEIGHTS_FILE, "r") as f:
-                    data = json.load(f)
-                    self.experiencias = data.get("experiencias", 0)
-                    self.pesos = np.array(data.get("pesos", self.pesos.tolist()))
-            except:
-                pass
-
-    def guardar_estado(self):
-        try:
-            with open(WEIGHTS_FILE, "w") as f:
-                json.dump({"experiencias": self.experiencias, "pesos": self.pesos.tolist()}, f)
-        except:
-            pass
-
-    def loop_aprendizaje(self):
-        while True:
-            self.pesos += np.random.randn(4, 8) * 0.01
-            self.experiencias += 1
-            self.guardar_estado()
-            time.sleep(30)
-
-# Gestion de API Keys
+# gestiónsita api keys
 def cargar_keys():
     if os.path.exists(KEYS_FILE):
         try:
@@ -55,36 +22,77 @@ def guardar_keys(keys):
     with open(KEYS_FILE, "w") as f:
         json.dump(keys, f)
 
-# Iniciar IA en segundo plano
-tcai = TCAIModel001Lite()
-threading.Thread(target=tcai.loop_aprendizaje, daemon=True).start()
+# aprender escribir y Código 
+def cargar_memoria():
+    if os.path.exists(MEMORY_FILE):
+        try:
+            with open(MEMORY_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def guardar_memoria(memoria):
+    with open(MEMORY_FILE, "w") as f:
+        json.dump(memoria, f, indent=4)
 
 @app.route("/")
 def home():
-    return f"TCAI Model 001 Lite activo. Experiencias: {tcai.experiencias}"
+    memoria = cargar_memoria()
+    return f"TCAI Model 001 Lite activo. Conceptos aprendidos: {len(memoria)}"
 
+# uno crear apikey nueva
 @app.route("/api/create-key", methods=["POST"])
 def create_key():
-    # Genera una llave unica con la estructura exacta solicitada
     nueva_key = f"tcAI_{secrets.token_hex(12)}"
     keys = cargar_keys()
     keys.append(nueva_key)
     guardar_keys(keys)
     return jsonify({"status": "success", "api_key": nueva_key, "mensaje": "Guarda tu key, no se volvera a mostrar."})
 
-@app.route("/api/protected-action", methods=["POST"])
-def protected_action():
+# dos enseñar  un concepto o comando de programación
+@app.route("/api/aprender", methods=["POST"])
+def aprender():
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
-        return jsonify({"error": "Falta header de autorizacion Bearer"}), 401
+        return jsonify({"error": "Falta token de autorización"}), 401
     
     token = auth_header.split(" ")[1]
-    keys = cargar_keys()
-    
-    if token not in keys:
-        return jsonify({"error": "API Key invalida"}), 403
+    if token not in cargar_keys():
+        return jsonify({"error": "API Key inválida"}), 403
 
-    return jsonify({"status": "ok", "mensaje": "Acceso concedido a TCAI", "experiencias": tcai.experiencias})
+    data = request.json
+    prompt = data.get("prompt", "").strip()
+    respuesta = data.get("respuesta", "").strip()
+
+    if not prompt or not respuesta:
+        return jsonify({"error": "Faltan datos: envia 'prompt' y 'respuesta'"}), 400
+
+    memoria = cargar_memoria()
+    memoria[prompt.lower()] = respuesta
+    guardar_memoria(memoria)
+
+    return jsonify({"status": "success", "mensaje": f"¡Concepto '{prompt}' aprendido con éxito!"})
+
+# tres preguntar a la ia (requiere apikey)
+@app.route("/api/preguntar", methods=["POST"])
+def preguntar():
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return jsonify({"error": "Falta token de autorización"}), 401
+    
+    token = auth_header.split(" ")[1]
+    if token not in cargar_keys():
+        return jsonify({"error": "API Key inválida"}), 403
+
+    data = request.json
+    prompt = data.get("prompt", "").strip().lower()
+
+    memoria = cargar_memoria()
+    if prompt in memoria:
+        return jsonify({"respuesta": memoria[prompt]})
+    
+    return jsonify({"respuesta": "Aún no he aprendido sobre eso. Enséñame usando /api/aprender"})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
